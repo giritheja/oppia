@@ -14,8 +14,11 @@
 
 """Tests for the profile page."""
 
+from constants import constants
+
 from core.domain import exp_services
 from core.domain import rights_manager
+from core.domain import subscription_services
 from core.domain import user_services
 from core.tests import test_utils
 import feconf
@@ -29,7 +32,7 @@ class SignupTest(test_utils.GenericTestBase):
         response = self.testapp.get(feconf.SIGNUP_URL)
         self.assertEqual(response.status_int, 200)
         # Sign in can't be inside an html tag, but can appear inside js code
-        response.mustcontain(no=['Logout', '>Sign in'])
+        response.mustcontain(no=['Logout'])
         self.logout()
 
     def test_going_somewhere_else_while_signing_in_logs_user_out(self):
@@ -53,14 +56,14 @@ class SignupTest(test_utils.GenericTestBase):
         response_dict = self.post_json(
             feconf.SIGNUP_DATA_URL, {'agreed_to_terms': False},
             csrf_token=csrf_token, expect_errors=True, expected_status_int=400)
-        self.assertEqual(response_dict['code'], 400)
+        self.assertEqual(response_dict['status_code'], 400)
         self.assertIn('you will need to accept', response_dict['error'])
 
         response_dict = self.post_json(
             feconf.SIGNUP_DATA_URL,
             {'agreed_to_terms': 'Hasta la vista!'},
             csrf_token=csrf_token, expect_errors=True, expected_status_int=400)
-        self.assertEqual(response_dict['code'], 400)
+        self.assertEqual(response_dict['status_code'], 400)
         self.assertIn('you will need to accept', response_dict['error'])
 
         self.post_json(
@@ -79,21 +82,21 @@ class SignupTest(test_utils.GenericTestBase):
         response_dict = self.post_json(
             feconf.SIGNUP_DATA_URL, {'agreed_to_terms': True},
             csrf_token=csrf_token, expect_errors=True, expected_status_int=400)
-        self.assertEqual(response_dict['code'], 400)
+        self.assertEqual(response_dict['status_code'], 400)
         self.assertIn('Empty username supplied', response_dict['error'])
 
         response_dict = self.post_json(
             feconf.SIGNUP_DATA_URL,
             {'username': '', 'agreed_to_terms': True},
             csrf_token=csrf_token, expect_errors=True, expected_status_int=400)
-        self.assertEqual(response_dict['code'], 400)
+        self.assertEqual(response_dict['status_code'], 400)
         self.assertIn('Empty username supplied', response_dict['error'])
 
         response_dict = self.post_json(
             feconf.SIGNUP_DATA_URL,
             {'username': '!a!', 'agreed_to_terms': True},
             csrf_token=csrf_token, expect_errors=True, expected_status_int=400)
-        self.assertEqual(response_dict['code'], 400)
+        self.assertEqual(response_dict['status_code'], 400)
         self.assertIn(
             'can only have alphanumeric characters', response_dict['error'])
 
@@ -101,7 +104,7 @@ class SignupTest(test_utils.GenericTestBase):
             feconf.SIGNUP_DATA_URL,
             {'username': self.UNICODE_TEST_STRING, 'agreed_to_terms': True},
             csrf_token=csrf_token, expect_errors=True, expected_status_int=400)
-        self.assertEqual(response_dict['code'], 400)
+        self.assertEqual(response_dict['status_code'], 400)
         self.assertIn(
             'can only have alphanumeric characters', response_dict['error'])
 
@@ -109,6 +112,45 @@ class SignupTest(test_utils.GenericTestBase):
             feconf.SIGNUP_DATA_URL,
             {'username': 'abcde', 'agreed_to_terms': True},
             csrf_token=csrf_token)
+
+        self.logout()
+
+    def test_default_dashboard_for_new_users(self):
+        self.login(self.EDITOR_EMAIL)
+        response = self.testapp.get(feconf.SIGNUP_URL)
+        csrf_token = self.get_csrf_token_from_response(response)
+
+        # This user should have the creator dashboard as default.
+        self.post_json(
+            feconf.SIGNUP_DATA_URL,
+            {'agreed_to_terms': True, 'username': 'creatoruser',
+             'default_dashboard': constants.DASHBOARD_TYPE_CREATOR,
+             'can_receive_email_updates': None},
+            csrf_token)
+
+        user_id = user_services.get_user_id_from_username('creatoruser')
+        user_settings = user_services.get_user_settings(user_id)
+        self.assertEqual(
+            user_settings.default_dashboard, constants.DASHBOARD_TYPE_CREATOR)
+
+        self.logout()
+
+        self.login(self.VIEWER_EMAIL)
+        response = self.testapp.get(feconf.SIGNUP_URL)
+        csrf_token = self.get_csrf_token_from_response(response)
+
+        # This user should have the learner dashboard as default.
+        self.post_json(
+            feconf.SIGNUP_DATA_URL,
+            {'agreed_to_terms': True, 'username': 'learneruser',
+             'default_dashboard': constants.DASHBOARD_TYPE_LEARNER,
+             'can_receive_email_updates': None},
+            csrf_token)
+
+        user_id = user_services.get_user_id_from_username('learneruser')
+        user_settings = user_services.get_user_settings(user_id)
+        self.assertEqual(
+            user_settings.default_dashboard, constants.DASHBOARD_TYPE_LEARNER)
 
         self.logout()
 
@@ -139,7 +181,7 @@ class UsernameCheckHandlerTests(test_utils.GenericTestBase):
         response_dict = self.post_json(
             feconf.USERNAME_CHECK_DATA_URL, {'username': '!!!INVALID!!!'},
             csrf_token=csrf_token, expect_errors=True, expected_status_int=400)
-        self.assertEqual(response_dict['code'], 400)
+        self.assertEqual(response_dict['status_code'], 400)
         self.assertIn(
             'can only have alphanumeric characters', response_dict['error'])
 
@@ -147,7 +189,7 @@ class UsernameCheckHandlerTests(test_utils.GenericTestBase):
             feconf.USERNAME_CHECK_DATA_URL,
             {'username': self.UNICODE_TEST_STRING},
             csrf_token=csrf_token, expect_errors=True, expected_status_int=400)
-        self.assertEqual(response_dict['code'], 400)
+        self.assertEqual(response_dict['status_code'], 400)
         self.assertIn(
             'can only have alphanumeric characters', response_dict['error'])
 
@@ -169,25 +211,29 @@ class EmailPreferencesTests(test_utils.GenericTestBase):
         # is.
         editor_id = self.get_user_id_from_email(self.EDITOR_EMAIL)
         with self.swap(feconf, 'DEFAULT_EMAIL_UPDATES_PREFERENCE', True):
+            email_preferences = user_services.get_email_preferences(editor_id)
+            self.assertEqual(email_preferences.can_receive_email_updates, True)
             self.assertEqual(
-                user_services.get_email_preferences(editor_id),
-                {
-                    'can_receive_email_updates': True,
-                    'can_receive_editor_role_email': (
-                        feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE),
-                    'can_receive_feedback_message_email': (
-                        feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
-                })
+                email_preferences.can_receive_editor_role_email,
+                feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_feedback_message_email,
+                feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_subscription_email,
+                feconf.DEFAULT_SUBSCRIPTION_EMAIL_PREFERENCE)
         with self.swap(feconf, 'DEFAULT_EMAIL_UPDATES_PREFERENCE', False):
+            email_preferences = user_services.get_email_preferences(editor_id)
+            self.assertEqual(email_preferences.can_receive_email_updates, False)
             self.assertEqual(
-                user_services.get_email_preferences(editor_id),
-                {
-                    'can_receive_email_updates': False,
-                    'can_receive_editor_role_email': (
-                        feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE),
-                    'can_receive_feedback_message_email': (
-                        feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
-                })
+                email_preferences.can_receive_editor_role_email,
+                feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_feedback_message_email,
+                feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_subscription_email,
+                feconf.DEFAULT_SUBSCRIPTION_EMAIL_PREFERENCE)
 
     def test_user_allowing_emails_on_signup(self):
         self.login(self.EDITOR_EMAIL)
@@ -202,25 +248,29 @@ class EmailPreferencesTests(test_utils.GenericTestBase):
         # The email update preference should be True in all cases.
         editor_id = self.get_user_id_from_email(self.EDITOR_EMAIL)
         with self.swap(feconf, 'DEFAULT_EMAIL_UPDATES_PREFERENCE', True):
+            email_preferences = user_services.get_email_preferences(editor_id)
+            self.assertEqual(email_preferences.can_receive_email_updates, True)
             self.assertEqual(
-                user_services.get_email_preferences(editor_id),
-                {
-                    'can_receive_email_updates': True,
-                    'can_receive_editor_role_email': (
-                        feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE),
-                    'can_receive_feedback_message_email': (
-                        feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
-                })
+                email_preferences.can_receive_editor_role_email,
+                feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_feedback_message_email,
+                feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_subscription_email,
+                feconf.DEFAULT_SUBSCRIPTION_EMAIL_PREFERENCE)
         with self.swap(feconf, 'DEFAULT_EMAIL_UPDATES_PREFERENCE', False):
+            email_preferences = user_services.get_email_preferences(editor_id)
+            self.assertEqual(email_preferences.can_receive_email_updates, True)
             self.assertEqual(
-                user_services.get_email_preferences(editor_id),
-                {
-                    'can_receive_email_updates': True,
-                    'can_receive_editor_role_email': (
-                        feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE),
-                    'can_receive_feedback_message_email': (
-                        feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
-                })
+                email_preferences.can_receive_editor_role_email,
+                feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_feedback_message_email,
+                feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_subscription_email,
+                feconf.DEFAULT_SUBSCRIPTION_EMAIL_PREFERENCE)
 
     def test_user_disallowing_emails_on_signup(self):
         self.login(self.EDITOR_EMAIL)
@@ -235,25 +285,115 @@ class EmailPreferencesTests(test_utils.GenericTestBase):
         # The email update preference should be False in all cases.
         editor_id = self.get_user_id_from_email(self.EDITOR_EMAIL)
         with self.swap(feconf, 'DEFAULT_EMAIL_UPDATES_PREFERENCE', True):
+            email_preferences = user_services.get_email_preferences(editor_id)
+            self.assertEqual(email_preferences.can_receive_email_updates, False)
             self.assertEqual(
-                user_services.get_email_preferences(editor_id),
-                {
-                    'can_receive_email_updates': False,
-                    'can_receive_editor_role_email': (
-                        feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE),
-                    'can_receive_feedback_message_email': (
-                        feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
-                })
+                email_preferences.can_receive_editor_role_email,
+                feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_feedback_message_email,
+                feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_subscription_email,
+                feconf.DEFAULT_SUBSCRIPTION_EMAIL_PREFERENCE)
+
         with self.swap(feconf, 'DEFAULT_EMAIL_UPDATES_PREFERENCE', False):
+            email_preferences = user_services.get_email_preferences(editor_id)
+            self.assertEqual(email_preferences.can_receive_email_updates, False)
             self.assertEqual(
-                user_services.get_email_preferences(editor_id),
-                {
-                    'can_receive_email_updates': False,
-                    'can_receive_editor_role_email': (
-                        feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE),
-                    'can_receive_feedback_message_email': (
-                        feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
-                })
+                email_preferences.can_receive_editor_role_email,
+                feconf.DEFAULT_EDITOR_ROLE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_feedback_message_email,
+                feconf.DEFAULT_FEEDBACK_MESSAGE_EMAIL_PREFERENCE)
+            self.assertEqual(
+                email_preferences.can_receive_subscription_email,
+                feconf.DEFAULT_SUBSCRIPTION_EMAIL_PREFERENCE)
+
+    def test_email_preferences_updates(self):
+        """Test that Preferences Handler correctly updates the email
+        preferences of the user.
+        """
+
+        self.signup(self.EDITOR_EMAIL, username=self.EDITOR_USERNAME)
+        editor_id = self.get_user_id_from_email(self.EDITOR_EMAIL)
+        self.login(self.EDITOR_EMAIL)
+        response = self.testapp.get('/preferences')
+        csrf_token = self.get_csrf_token_from_response(response)
+
+        payload = {
+            'update_type': 'email_preferences',
+            'data': {
+                'can_receive_email_updates': True,
+                'can_receive_editor_role_email': True,
+                'can_receive_feedback_message_email': True,
+                'can_receive_subscription_email': True
+            }
+        }
+
+        # Allow all emails.
+        self.put_json(
+            '/preferenceshandler/data', payload, csrf_token=csrf_token)
+
+        email_preferences = user_services.get_email_preferences(editor_id)
+        self.assertTrue(email_preferences.can_receive_email_updates)
+        self.assertTrue(email_preferences.can_receive_editor_role_email)
+        self.assertTrue(email_preferences.can_receive_feedback_message_email)
+        self.assertTrue(email_preferences.can_receive_subscription_email)
+
+        payload = {
+            'update_type': 'email_preferences',
+            'data': {
+                'can_receive_email_updates': False,
+                'can_receive_editor_role_email': False,
+                'can_receive_feedback_message_email': False,
+                'can_receive_subscription_email': False
+            }
+        }
+
+        # Disallow all emails.
+        self.put_json(
+            '/preferenceshandler/data', payload, csrf_token=csrf_token)
+
+        email_preferences = user_services.get_email_preferences(editor_id)
+        self.assertFalse(email_preferences.can_receive_email_updates)
+        self.assertFalse(email_preferences.can_receive_editor_role_email)
+        self.assertFalse(email_preferences.can_receive_feedback_message_email)
+        self.assertFalse(email_preferences.can_receive_subscription_email)
+
+
+class PreferencesHandlerTests(test_utils.GenericTestBase):
+    EXP_ID = 'exp_id'
+    EXP_TITLE = 'Exploration title'
+
+    def setUp(self):
+        super(PreferencesHandlerTests, self).setUp()
+        self.signup(self.OWNER_EMAIL, self.OWNER_USERNAME)
+        self.signup(self.VIEWER_EMAIL, self.VIEWER_USERNAME)
+
+        self.owner_id = self.get_user_id_from_email(self.OWNER_EMAIL)
+        self.viewer_id = self.get_user_id_from_email(self.VIEWER_EMAIL)
+
+    def test_can_see_subscriptions(self):
+        self.login(self.VIEWER_EMAIL)
+
+        response = self.get_json(feconf.PREFERENCES_DATA_URL)
+        self.assertEqual(len(response['subscription_list']), 0)
+
+        # Subscribe to user.
+        subscription_services.subscribe_to_creator(
+            self.viewer_id, self.owner_id)
+        response = self.get_json(feconf.PREFERENCES_DATA_URL)
+        self.assertEqual(len(response['subscription_list']), 1)
+        self.assertEqual(
+            response['subscription_list'][0]['creator_username'],
+            self.OWNER_USERNAME)
+
+        # Unsubscribe from user.
+        subscription_services.unsubscribe_from_creator(
+            self.viewer_id, self.owner_id)
+        response = self.get_json(feconf.PREFERENCES_DATA_URL)
+        self.assertEqual(len(response['subscription_list']), 0)
 
 
 class ProfileLinkTests(test_utils.GenericTestBase):
@@ -290,9 +430,14 @@ class ProfileDataHandlerTests(test_utils.GenericTestBase):
         self.assertEqual(
             ['en'], original_preferences['preferred_language_codes'])
         self.assertIsNone(original_preferences['preferred_site_language_code'])
+        self.assertIsNone(original_preferences['preferred_audio_language_code'])
         self.put_json(
             '/preferenceshandler/data',
             {'update_type': 'preferred_site_language_code', 'data': 'en'},
+            csrf_token=csrf_token)
+        self.put_json(
+            '/preferenceshandler/data',
+            {'update_type': 'preferred_audio_language_code', 'data': 'hi-en'},
             csrf_token=csrf_token)
         self.put_json(
             '/preferenceshandler/data',
@@ -301,6 +446,8 @@ class ProfileDataHandlerTests(test_utils.GenericTestBase):
         new_preferences = self.get_json('/preferenceshandler/data')
         self.assertEqual(new_preferences['preferred_language_codes'], ['de'])
         self.assertEqual(new_preferences['preferred_site_language_code'], 'en')
+        self.assertEqual(
+            new_preferences['preferred_audio_language_code'], 'hi-en')
 
     def test_profile_data_is_independent_of_currently_logged_in_user(self):
         self.signup(self.EDITOR_EMAIL, username=self.EDITOR_USERNAME)
@@ -417,9 +564,10 @@ class UserContributionsTests(test_utils.GenericTestBase):
         # a single exploration shows 1 created and 1 edited exploration.
         self.signup(self.EMAIL_A, self.USERNAME_A)
         user_a_id = self.get_user_id_from_email(self.EMAIL_A)
+        user_a = user_services.UserActionsInfo(user_a_id)
         self.save_new_valid_exploration(
             self.EXP_ID_1, user_a_id, end_state_name='End')
-        rights_manager.publish_exploration(user_a_id, self.EXP_ID_1)
+        rights_manager.publish_exploration(user_a, self.EXP_ID_1)
 
         response_dict = self.get_json(
             '/profilehandler/data/%s' % self.USERNAME_A)
@@ -443,10 +591,10 @@ class UserContributionsTests(test_utils.GenericTestBase):
 
         self.signup(self.EMAIL_B, self.USERNAME_B)
         user_b_id = self.get_user_id_from_email(self.EMAIL_B)
-
+        user_a = user_services.UserActionsInfo(user_a_id)
         self.save_new_valid_exploration(
             self.EXP_ID_1, user_a_id, end_state_name='End')
-        rights_manager.publish_exploration(user_a_id, self.EXP_ID_1)
+        rights_manager.publish_exploration(user_a, self.EXP_ID_1)
 
         exp_services.update_exploration(user_b_id, self.EXP_ID_1, [{
             'cmd': 'edit_exploration_property',
@@ -491,11 +639,44 @@ class SiteLanguageHandlerTests(test_utils.GenericTestBase):
 
         self.logout()
 
-    def test_save_site_language_no_user(self):
-        """The SiteLanguageHandler handler can be called without a user."""
-        response = self.testapp.get('/teach')
+
+class LongUserBioHandlerTests(test_utils.GenericTestBase):
+    USERNAME_A = 'a'
+    EMAIL_A = 'a@example.com'
+    USERNAME_B = 'b'
+    EMAIL_B = 'b@example.com'
+
+    def test_userbio_within_limit(self):
+        self.signup(self.EMAIL_A, self.USERNAME_A)
+        self.login(self.EMAIL_A)
+        response = self.testapp.get('/preferences')
         self.assertEqual(response.status_int, 200)
         csrf_token = self.get_csrf_token_from_response(response)
-        self.put_json(feconf.SITE_LANGUAGE_DATA_URL, {
-            'site_language_code': 'es',
+        self.put_json('/preferenceshandler/data', {
+            'update_type': 'user_bio',
+            'data': 'I am within 2000 char limit',
         }, csrf_token)
+        preferences = self.get_json('/preferenceshandler/data')
+        self.assertIsNotNone(preferences)
+        self.assertEqual(
+            preferences['user_bio'], 'I am within 2000 char limit')
+        self.logout()
+
+    def test_user_bio_exceeds_limit(self):
+        self.signup(self.EMAIL_B, self.USERNAME_B)
+        self.login(self.EMAIL_B)
+        response = self.testapp.get('/preferences')
+        self.assertEqual(response.status_int, 200)
+        csrf_token = self.get_csrf_token_from_response(response)
+        user_bio_response = self.put_json(
+            '/preferenceshandler/data', {
+                'update_type': 'user_bio',
+                'data': 'I am not within 2000 char limit' * 200
+            },
+            csrf_token=csrf_token,
+            expect_errors=True,
+            expected_status_int=400)
+        self.assertEqual(user_bio_response['status_code'], 400)
+        self.assertIn('User bio exceeds maximum character limit: 2000',
+                      user_bio_response['error'])
+        self.logout()

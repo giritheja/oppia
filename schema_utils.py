@@ -25,6 +25,7 @@ following Python types: bool, dict, float, int, list, unicode.
 """
 
 import numbers
+import re
 import urllib
 import urlparse
 
@@ -52,7 +53,7 @@ SCHEMA_TYPE_LIST = 'list'
 SCHEMA_TYPE_UNICODE = 'unicode'
 
 
-def normalize_against_schema(obj, schema):
+def normalize_against_schema(obj, schema, apply_custom_validators=True):
     """Validate the given object using the schema, normalizing if necessary.
 
     Returns:
@@ -136,13 +137,15 @@ def normalize_against_schema(obj, schema):
                 normalized_obj, **kwargs)
 
     # Validate the normalized object.
-    if SCHEMA_KEY_VALIDATORS in schema:
-        for validator in schema[SCHEMA_KEY_VALIDATORS]:
-            kwargs = dict(validator)
-            del kwargs['id']
-            assert _Validators.get(validator['id'])(normalized_obj, **kwargs), (
-                'Validation failed: %s (%s) for object %s' % (
-                    validator['id'], kwargs, normalized_obj))
+    if apply_custom_validators:
+        if SCHEMA_KEY_VALIDATORS in schema:
+            for validator in schema[SCHEMA_KEY_VALIDATORS]:
+                kwargs = dict(validator)
+                del kwargs['id']
+                assert _Validators.get(
+                    validator['id'])(normalized_obj, **kwargs), (
+                        'Validation failed: %s (%s) for object %s' % (
+                            validator['id'], kwargs, normalized_obj))
 
     return normalized_obj
 
@@ -263,3 +266,8 @@ class _Validators(object):
     def matches_regex(obj, regex):
         """Ensures that `obj` (a string) matches the given regex."""
         raise NotImplementedError
+
+    @staticmethod
+    def is_valid_email(obj):
+        """Ensures that `obj` (a string) is a valid email."""
+        return bool(re.search(r"^[\w\.\+\-]+\@[\w]+\.[a-z]{2,3}$", obj))

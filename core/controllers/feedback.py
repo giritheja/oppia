@@ -14,28 +14,30 @@
 
 """Controllers for the feedback thread page."""
 
-import json
-
 from core.controllers import base
-from core.controllers import editor
-from core.domain import email_manager
+from core.domain import acl_decorators
 from core.domain import exp_services
 from core.domain import feedback_services
-from core.domain import rights_manager
 from core.platform import models
+import feconf
+
 
 transaction_services = models.Registry.import_transaction_services()
+
 
 class ThreadListHandler(base.BaseHandler):
     """Handles operations relating to feedback thread lists."""
 
+    GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+
+    @acl_decorators.can_play_exploration
     def get(self, exploration_id):
         self.values.update({
             'threads': [t.to_dict() for t in feedback_services.get_all_threads(
                 exploration_id, False)]})
         self.render_json(self.values)
 
-    @base.require_user
+    @acl_decorators.can_comment_on_feedback_thread
     def post(self, exploration_id):
         subject = self.payload.get('subject')
         if not subject:
@@ -59,16 +61,23 @@ class ThreadListHandler(base.BaseHandler):
 class ThreadHandler(base.BaseHandler):
     """Handles operations relating to feedback threads."""
 
+    GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+
+    @acl_decorators.can_play_exploration
     def get(self, exploration_id, thread_id):  # pylint: disable=unused-argument
         suggestion = feedback_services.get_suggestion(exploration_id, thread_id)
+        messages = [m.to_dict() for m in feedback_services.get_messages(
+            exploration_id, thread_id)]
+        message_ids = [message['message_id'] for message in messages]
+        feedback_services.update_messages_read_by_the_user(
+            self.user_id, exploration_id, thread_id, message_ids)
         self.values.update({
-            'messages': [m.to_dict() for m in feedback_services.get_messages(
-                exploration_id, thread_id)],
+            'messages': messages,
             'suggestion': suggestion.to_dict() if suggestion else None
         })
         self.render_json(self.values)
 
-    @base.require_user
+    @acl_decorators.can_comment_on_feedback_thread
     def post(self, exploration_id, thread_id):  # pylint: disable=unused-argument
         suggestion = feedback_services.get_suggestion(exploration_id, thread_id)
         text = self.payload.get('text')
@@ -97,7 +106,9 @@ class RecentFeedbackMessagesHandler(base.BaseHandler):
     explorations.
     """
 
-    @base.require_moderator
+    GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+
+    @acl_decorators.can_access_moderator_page
     def get(self):
         urlsafe_start_cursor = self.request.get('cursor')
 
@@ -118,6 +129,9 @@ class FeedbackStatsHandler(base.BaseHandler):
         - Number of total threads
     """
 
+    GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+
+    @acl_decorators.can_play_exploration
     def get(self, exploration_id):
         feedback_thread_analytics = (
             feedback_services.get_thread_analytics(
@@ -134,7 +148,7 @@ class FeedbackStatsHandler(base.BaseHandler):
 class SuggestionHandler(base.BaseHandler):
     """"Handles operations relating to learner suggestions."""
 
-    @base.require_user
+    @acl_decorators.can_suggest_changes_to_exploration
     def post(self, exploration_id):
         feedback_services.create_suggestion(
             exploration_id,
@@ -142,7 +156,7 @@ class SuggestionHandler(base.BaseHandler):
             self.payload.get('exploration_version'),
             self.payload.get('state_name'),
             self.payload.get('description'),
-            self.payload.get('suggestion_content'))
+            self.payload.get('suggestion_html'))
         self.render_json(self.values)
 
 
@@ -152,7 +166,7 @@ class SuggestionActionHandler(base.BaseHandler):
     _ACCEPT_ACTION = 'accept'
     _REJECT_ACTION = 'reject'
 
-    @editor.require_editor
+    @acl_decorators.can_edit_exploration
     def put(self, exploration_id, thread_id):
         action = self.payload.get('action')
         if action == self._ACCEPT_ACTION:
@@ -160,7 +174,8 @@ class SuggestionActionHandler(base.BaseHandler):
                 self.user_id,
                 thread_id,
                 exploration_id,
-                self.payload.get('commit_message'))
+                self.payload.get('commit_message'),
+                self.payload.get('audio_update_required'))
         elif action == self._REJECT_ACTION:
             exp_services.reject_suggestion(
                 self.user_id, thread_id, exploration_id)
@@ -177,6 +192,8 @@ class SuggestionListHandler(base.BaseHandler):
     _LIST_TYPE_CLOSED = 'closed'
     _LIST_TYPE_ALL = 'all'
 
+    GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+
     def _string_to_bool(self, has_suggestion):
         if has_suggestion == 'true':
             return True
@@ -185,7 +202,7 @@ class SuggestionListHandler(base.BaseHandler):
         else:
             return None
 
-    @base.require_user
+    @acl_decorators.can_comment_on_feedback_thread
     def get(self, exploration_id):
         threads = None
         list_type = self.request.get('list_type')
@@ -210,75 +227,15 @@ class SuggestionListHandler(base.BaseHandler):
         self.render_json(self.values)
 
 
-class UnsentFeedbackEmailHandler(base.BaseHandler):
-    """Handler task of sending emails of feedback messages."""
-
-    def post(self):
-        payload = json.loads(self.request.body)
-        user_id = payload['user_id']
-        references = feedback_services.get_feedback_message_references(user_id)
-        if not references:
-            # Model may not exist if user has already attended to the feedback.
-            return
-
-        transaction_services.run_in_transaction(
-            feedback_services.update_feedback_email_retries, user_id)
-
-        messages = {}
-        for reference in references:
-            message = feedback_services.get_message(
-                reference.exploration_id, reference.thread_id,
-                reference.message_id)
-
-            exploration = exp_services.get_exploration_by_id(
-                reference.exploration_id)
-
-            message_text = message.text
-            if len(message_text) > 200:
-                message_text = message_text[:200] + '...'
-
-            if exploration.id in messages:
-                messages[exploration.id]['messages'].append(message_text)
-            else:
-                messages[exploration.id] = {
-                    'title': exploration.title,
-                    'messages': [message_text]
-                }
-
-        email_manager.send_feedback_message_email(user_id, messages)
-        transaction_services.run_in_transaction(
-            feedback_services.pop_feedback_message_references, user_id,
-            len(references))
-
-
 class FeedbackThreadViewEventHandler(base.BaseHandler):
     """Records when the given user views a feedback thread, in order to clear
     viewed feedback messages from emails that might be sent in future to this
     user."""
 
-    @base.require_user
-    def post(self):
-        exploration_id = self.payload.get('exploration_id')
+    @acl_decorators.can_comment_on_feedback_thread
+    def post(self, exploration_id):
         thread_id = self.payload.get('thread_id')
         transaction_services.run_in_transaction(
             feedback_services.clear_feedback_message_references, self.user_id,
             exploration_id, thread_id)
         self.render_json(self.values)
-
-
-class SuggestionEmailHandler(base.BaseHandler):
-    """Handler task of sending email of suggestion."""
-
-    def post(self):
-        payload = json.loads(self.request.body)
-        exploration_id = payload['exploration_id']
-        thread_id = payload['thread_id']
-
-        exploration_rights = (
-            rights_manager.get_exploration_rights(exploration_id))
-        exploration = exp_services.get_exploration_by_id(exploration_id)
-        suggestion = feedback_services.get_suggestion(exploration_id, thread_id)
-
-        email_manager.send_suggestion_email(
-            exploration.title, exploration.id, suggestion.author_id,
-            exploration_rights.owner_ids)

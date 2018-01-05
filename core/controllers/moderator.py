@@ -15,25 +15,29 @@
 """Controllers for the moderator page."""
 
 from core.controllers import base
+from core.domain import acl_decorators
 from core.domain import activity_domain
 from core.domain import activity_services
 from core.domain import email_manager
 from core.domain import summary_services
+import feconf
 
 
 class ModeratorPage(base.BaseHandler):
     """The moderator page."""
 
-    @base.require_moderator
+    @acl_decorators.can_access_moderator_page
     def get(self):
         """Handles GET requests."""
-        self.render_template('moderator/moderator.html')
+        self.render_template('pages/moderator/moderator.html')
 
 
 class FeaturedActivitiesHandler(base.BaseHandler):
     """The moderator page handler for featured activities."""
 
-    @base.require_moderator
+    GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+
+    @acl_decorators.can_access_moderator_page
     def get(self):
         """Handles GET requests."""
         self.render_json({
@@ -43,7 +47,7 @@ class FeaturedActivitiesHandler(base.BaseHandler):
             ],
         })
 
-    @base.require_moderator
+    @acl_decorators.can_access_moderator_page
     def post(self):
         """Handles POST requests."""
         featured_activity_reference_dicts = self.payload.get(
@@ -68,10 +72,12 @@ class FeaturedActivitiesHandler(base.BaseHandler):
 class EmailDraftHandler(base.BaseHandler):
     """Provide default email templates for moderator emails."""
 
-    @base.require_moderator
-    def get(self, action):
+    GET_HANDLER_ERROR_RETURN_TYPE = feconf.HANDLER_TYPE_JSON
+
+    @acl_decorators.can_send_moderator_emails
+    def get(self):
         """Handles GET requests."""
         self.render_json({
             'draft_email_body': (
-                email_manager.get_draft_moderator_action_email(action)),
+                email_manager.get_moderator_unpublish_exploration_email()),
         })

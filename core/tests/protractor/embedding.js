@@ -19,50 +19,59 @@
 var forms = require('../protractor_utils/forms.js');
 var general = require('../protractor_utils/general.js');
 var users = require('../protractor_utils/users.js');
-var admin = require('../protractor_utils/admin.js');
+var AdminPage = require('../protractor_utils/AdminPage.js');
 var editor = require('../protractor_utils/editor.js');
-var player = require('../protractor_utils/player.js');
+var ExplorationPlayerPage =
+  require('../protractor_utils/ExplorationPlayerPage.js');
 
 describe('Embedding', function() {
+  var adminPage = null;
+  var explorationPlayerPage = null;
+
+  beforeEach(function() {
+    adminPage = new AdminPage.AdminPage();
+    explorationPlayerPage = new ExplorationPlayerPage.ExplorationPlayerPage();
+  });
+
   it('should display and play embedded explorations', function() {
-    var TEST_PAGES = [
-      'embedding_tests_dev_0.0.1.html',
-      'embedding_tests_dev_0.0.1.min.html',
-      'embedding_tests_jsdelivr_0.0.1.min.html'];
-    // The length of time the page waits before confirming an exploration
-    // cannot be loaded.
-    var LOADING_TIMEOUT = 10000;
+    var TEST_PAGES = [{
+      filename: 'embedding_tests_dev_0.0.1.min.html',
+      isVersion1: true
+    }, {
+      filename: 'embedding_tests_dev_0.0.2.min.html',
+      isVersion1: false
+    }];
 
     var playCountingExploration = function(version) {
       general.waitForSystem();
       browser.waitForAngular();
 
-      player.expectContentToMatch(
+      explorationPlayerPage.expectContentToMatch(
         forms.toRichText((version === 1) ?
           'Suppose you were given three balls: one red, one blue, and one ' +
           'yellow. How many ways are there to arrange them in a straight ' +
           'line?' :
           'Version 2'));
-      player.submitAnswer('NumericInput', 6);
-      player.expectContentToMatch(
+      explorationPlayerPage.submitAnswer('NumericInput', 6);
+      explorationPlayerPage.expectContentToMatch(
         forms.toRichText('Right! Why do you think it is 6?'));
-      player.expectExplorationToNotBeOver();
-      player.submitAnswer('TextInput', 'factorial');
-      player.clickThroughToNextCard();
-      player.expectExplorationToBeOver();
+      explorationPlayerPage.expectExplorationToNotBeOver();
+      explorationPlayerPage.submitAnswer('TextInput', 'factorial');
+      explorationPlayerPage.clickThroughToNextCard();
+      explorationPlayerPage.expectExplorationToBeOver();
     };
 
     var PLAYTHROUGH_LOGS = [
       'Exploration loaded',
       'Transitioned from state Intro via answer 6 to state correct but why',
-      'Transitioned from state correct but why via answer "factorial" to ' +
-        'state END',
+      'Transitioned from state correct but why via answer \\"factorial\\" ' +
+        'to state END',
       'Exploration completed'
     ];
 
     users.createUser('user1@embedding.com', 'user1Embedding');
     users.login('user1@embedding.com', true);
-    admin.reloadExploration('protractor_test_1.yaml');
+    adminPage.reloadExploration('protractor_test_1.yaml');
 
     general.openEditor('12');
     editor.setContent(forms.toRichText('Version 2'));
@@ -73,44 +82,29 @@ describe('Embedding', function() {
       // for the same reason.
       var driver = browser.driver;
       driver.get(
-        general.SERVER_URL_PREFIX + general.SCRIPTS_URL_SLICE + TEST_PAGES[i]);
+        general.SERVER_URL_PREFIX + general.SCRIPTS_URL_SLICE +
+        TEST_PAGES[i].filename);
 
-      // Test of standard loading (new version)
+      // Test of standard loading (new and old versions)
       browser.switchTo().frame(
         driver.findElement(
           by.xpath("//div[@class='protractor-test-standard']/iframe")));
       playCountingExploration(2);
       browser.switchTo().defaultContent();
 
-      // Test of deferred loading (old version)
-      driver.findElement(
-        by.xpath(
-          "//div[@class='protractor-test-deferred']/oppia/div/button")).click();
+      if (TEST_PAGES[i].isVersion1) {
+        // Test of deferred loading (old version)
+        driver.findElement(
+          by.xpath(
+            "//div[@class='protractor-test-old-version']/oppia/div/button")
+        ).click();
+      }
+
       browser.switchTo().frame(
         driver.findElement(
-          by.xpath("//div[@class='protractor-test-deferred']/iframe")));
+          by.xpath("//div[@class='protractor-test-old-version']/iframe")));
       playCountingExploration(1);
       browser.switchTo().defaultContent();
-
-      // Tests of failed loading
-      var missingIdElement = driver.findElement(
-        by.xpath("//div[@class='protractor-test-missing-id']/div/span"));
-      expect(missingIdElement.getText()).toMatch(
-        'This Oppia exploration could not be loaded because no oppia-id ' +
-        'attribute was specified in the HTML tag.');
-      driver.findElement(
-        by.xpath(
-          "//div[@class='protractor-test-invalid-id-deferred']/oppia/div/button"
-        )).click();
-      browser.sleep(LOADING_TIMEOUT);
-      expect(
-        driver.findElement(
-          by.xpath("//div[@class='protractor-test-invalid-id']/div/div/span")
-        ).getText()).toMatch('This exploration could not be loaded.');
-      expect(
-        driver.findElement(
-          by.xpath("//div[@class='protractor-test-invalid-id']/div/div/span")
-        ).getText()).toMatch('This exploration could not be loaded.');
     }
 
     // Certain events in the exploration playthroughs should trigger hook
@@ -121,20 +115,36 @@ describe('Embedding', function() {
       for (var i = 0; i < browserLogs.length; i++) {
         // We ignore all logs that are not of the desired form.
         try {
-          var message = JSON.parse(browserLogs[i].message).message.
-            parameters[0].value;
+          var message = browserLogs[i].message;
           var EMBEDDING_PREFIX = 'Embedding test: ';
-          if (message.substring(0, EMBEDDING_PREFIX.length) ===
-              EMBEDDING_PREFIX) {
-            embeddingLogs.push(message.substring(EMBEDDING_PREFIX.length));
+          if (message.indexOf(EMBEDDING_PREFIX) !== -1) {
+            var index = message.indexOf(EMBEDDING_PREFIX);
+            // The "-1" in substring() removes the trailing quotation mark.
+            embeddingLogs.push(message.substring(
+              index + EMBEDDING_PREFIX.length, message.length - 1));
           }
         } catch (err) {}
       }
 
       // We played the exploration twice for each test page.
       var expectedLogs = [];
-      for (var i = 0; i < TEST_PAGES.length * 2; i++) {
-        expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS);
+      for (var i = 0; i < TEST_PAGES.length; i++) {
+        if (TEST_PAGES[i].isVersion1) {
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS);
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS);
+        } else {
+          // The two loading events are fired first ...
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS[0]);
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS[0]);
+          // ... followed by the rest of the events, as each playthrough
+          // occurs.
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS[1]);
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS[2]);
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS[3]);
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS[1]);
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS[2]);
+          expectedLogs = expectedLogs.concat(PLAYTHROUGH_LOGS[3]);
+        }
       }
       expect(embeddingLogs).toEqual(expectedLogs);
     });
@@ -156,13 +166,13 @@ describe('Embedding', function() {
       general.waitForSystem();
       browser.waitForAngular();
       expect(driver.findElement(by.css('.protractor-test-float-form-input'))
-          .getAttribute('placeholder')).toBe(expectedPlaceholder);
+        .getAttribute('placeholder')).toBe(expectedPlaceholder);
       browser.switchTo().defaultContent();
     };
 
     users.createUser('embedder2@example.com', 'Embedder2');
     users.login('embedder2@example.com', true);
-    admin.reloadExploration('protractor_test_1.yaml');
+    adminPage.reloadExploration('protractor_test_1.yaml');
 
     // Change language to Thai, which is not a supported site language.
     general.openEditor('12');

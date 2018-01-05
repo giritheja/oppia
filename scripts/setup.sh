@@ -20,7 +20,7 @@
 
 function maybeInstallDependencies {
   # Parse additional command line arguments.
-  # Credit: http://stackoverflow.com/questions/192249
+  # Credit: https://stackoverflow.com/questions/192249
   export SKIP_INSTALLING_THIRD_PARTY_LIBS=$DEFAULT_SKIP_INSTALLING_THIRD_PARTY_LIBS
   export RUN_MINIFIED_TESTS=$DEFAULT_RUN_MINIFIED_TESTS
   for i in "$@"; do
@@ -59,16 +59,17 @@ function maybeInstallDependencies {
 
     $NODE_PATH/bin/node $NODE_MODULE_DIR/gulp/bin/gulp.js build
 
-    install_node_module karma 0.12.16
-    install_node_module karma-jasmine 0.1.0
+    install_node_module jasmine-core 2.5.2
+    install_node_module karma 1.5.0
+    install_node_module karma-jasmine 1.1.0
     install_node_module karma-jasmine-jquery 0.1.1
     install_node_module karma-json-fixtures-preprocessor 0.0.6
-    install_node_module karma-coverage 0.5.2
-    install_node_module karma-ng-html2js-preprocessor 0.1.0
-    install_node_module karma-chrome-launcher 0.1.4
-    install_node_module protractor 3.3.0
+    install_node_module karma-coverage 1.1.1
+    install_node_module karma-ng-html2js-preprocessor 1.0.0
+    install_node_module karma-chrome-launcher 2.0.0
+    install_node_module protractor 5.1.1
     install_node_module protractor-screenshot-reporter 0.0.5
-    install_node_module jasmine-spec-reporter 2.2.2
+    install_node_module jasmine-spec-reporter 3.2.0
 
     $NODE_MODULE_DIR/.bin/webdriver-manager update
   fi
@@ -134,7 +135,7 @@ mkdir -p $THIRD_PARTY_DIR
 mkdir -p $NODE_MODULE_DIR
 
 # Adjust the path to include a reference to node.
-export NODE_PATH=$TOOLS_DIR/node-4.2.1
+export NODE_PATH=$TOOLS_DIR/node-6.9.1
 export PATH=$NODE_PATH/bin:$PATH
 export MACHINE_TYPE=`uname -m`
 export OS=`uname`
@@ -165,19 +166,19 @@ if [ ! -d "$NODE_PATH" ]; then
   echo Installing Node.js
   if [ ${OS} == "Darwin" ]; then
     if [ ${MACHINE_TYPE} == 'x86_64' ]; then
-      NODE_FILE_NAME=node-v4.2.1-darwin-x64
+      NODE_FILE_NAME=node-v6.9.1-darwin-x64
     else
-      NODE_FILE_NAME=node-v4.2.1-darwin-x86
+      NODE_FILE_NAME=node-v6.9.1-darwin-x86
     fi
   elif [ ${OS} == "Linux" ]; then
     if [ ${MACHINE_TYPE} == 'x86_64' ]; then
-      NODE_FILE_NAME=node-v4.2.1-linux-x64
+      NODE_FILE_NAME=node-v6.9.1-linux-x64
     else
-      NODE_FILE_NAME=node-v4.2.1-linux-x86
+      NODE_FILE_NAME=node-v6.9.1-linux-x86
     fi
   fi
 
-  curl --silent http://nodejs.org/dist/v4.2.1/$NODE_FILE_NAME.tar.gz -o node-download.tgz
+  curl -o node-download.tgz https://nodejs.org/dist/v6.9.1/$NODE_FILE_NAME.tar.gz
   tar xzf node-download.tgz --directory $TOOLS_DIR
   mv $TOOLS_DIR/$NODE_FILE_NAME $NODE_PATH
   rm node-download.tgz
@@ -191,7 +192,7 @@ fi
 # Adjust path to support the default Chrome locations for Unix, Windows and Mac OS.
 if [ "$TRAVIS" = true ]; then
   export CHROME_BIN="/usr/bin/chromium-browser"
-elif [ "$VAGRANT" = true ]; then
+elif [ "$VAGRANT" = true ] || [ -f "/etc/is_vagrant_vm" ]; then
   # XVFB is required for headless testing in Vagrant
   sudo apt-get install xvfb chromium-browser
   export CHROME_BIN="/usr/bin/chromium-browser"
@@ -251,7 +252,7 @@ if ! test_python_version $PYTHON_CMD; then
         echo "If you have two versions of Python (ie, Python 2.7 and 3), specify 2.7 before other versions of Python when setting the PATH."
         echo "Here are some helpful articles:"
         echo "http://docs.python-guide.org/en/latest/starting/install/win/"
-        echo "http://stackoverflow.com/questions/3701646/how-to-add-to-the-pythonpath-in-windows-7"
+        echo "https://stackoverflow.com/questions/3701646/how-to-add-to-the-pythonpath-in-windows-7"
     fi
     # Exit when no suitable Python environment can be found.
     return 1

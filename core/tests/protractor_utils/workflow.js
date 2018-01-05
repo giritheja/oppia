@@ -20,6 +20,7 @@
 var forms = require('./forms.js');
 var editor = require('./editor.js');
 var general = require('./general.js');
+var LibraryPage = require('./LibraryPage.js');
 
 // Creates an exploration and opens its editor.
 var createExploration = function() {
@@ -29,8 +30,9 @@ var createExploration = function() {
 
 // Creates a new exploration and wait for the exploration tutorial to start.
 var createExplorationAndStartTutorial = function() {
-  browser.get(general.LIBRARY_URL_SUFFIX);
-  element(by.css('.protractor-test-create-activity')).click();
+  libraryPage = new LibraryPage.LibraryPage();
+  libraryPage.get();
+  libraryPage.clickCreateActivity();
 
   // Wait for the dashboard to transition the creator into the editor page.
   browser.waitForAngular();
@@ -58,31 +60,16 @@ var createAndPublishExploration = function(
     title, category, objective, language) {
   createExploration();
   editor.setContent(forms.toRichText('new exploration'));
-  editor.setInteraction('TextInput');
-  editor.setDefaultOutcome(null, 'final state', true);
+  editor.setInteraction('EndExploration');
   editor.setTitle(title);
   editor.setCategory(category);
   editor.setObjective(objective);
   if (language) {
     editor.setLanguage(language);
   }
-  editor.setInteraction('Continue');
-
-  // Setup a terminating state
-  editor.moveToState('final state');
-  editor.setInteraction('EndExploration');
   editor.saveChanges();
 
   publishExploration();
-};
-
-// Run from the editor, requires user to be a moderator / admin.
-var markExplorationAsFeatured = function() {
-  editor.runFromSettingsTab(function() {
-    element(by.css('.protractor-test-mark-exploration-featured')).click();
-    general.waitForSystem();
-    element(by.css('.protractor-test-feature-exploration-button')).click();
-  });
 };
 
 // Role management (state editor settings tab)
@@ -116,7 +103,7 @@ var _getExplorationRoles = function(roleName) {
     var itemName = roleName + 'Name';
     var listName = roleName + 'Names';
     return element.all(by.repeater(
-      itemName + ' in explorationRightsService.' + listName + ' track by $index'
+      itemName + ' in ExplorationRightsService.' + listName + ' track by $index'
     )).map(function(elem) {
       return elem.getText();
     });
@@ -140,7 +127,6 @@ exports.createExploration = createExploration;
 exports.createExplorationAndStartTutorial = createExplorationAndStartTutorial;
 exports.publishExploration = publishExploration;
 exports.createAndPublishExploration = createAndPublishExploration;
-exports.markExplorationAsFeatured = markExplorationAsFeatured;
 
 exports.addExplorationManager = addExplorationManager;
 exports.addExplorationCollaborator = addExplorationCollaborator;

@@ -39,6 +39,7 @@ import json
 import os
 
 from core.domain import obj_services
+from core.domain import visualization_registry
 from extensions import domain
 from extensions.objects.models import objects
 import feconf
@@ -79,11 +80,9 @@ class BaseInteraction(object):
     is_terminal = False
     # Whether the interaction has only one possible answer.
     is_linear = False
-    # Whether this interaction supports training and statistical classification.
-    is_trainable = False
-    # Whether this interaction supports the string classifier.
+    # Whether this interaction supports machine learning classification.
     # TODO(chiangs): remove once classifier_services is generalized.
-    is_string_classifier_trainable = False
+    is_trainable = False
     # Additional JS library dependencies that should be loaded in pages
     # containing this interaction. These should correspond to names of files in
     # feconf.DEPENDENCIES_TEMPLATES_DIR. Overridden in subclasses.
@@ -95,6 +94,9 @@ class BaseInteraction(object):
     # Customization arg specifications for the component, including their
     # descriptions, schemas and default values. Overridden in subclasses.
     _customization_arg_specs = []
+    # Specs for desired visualizations of recorded state answers. Overridden
+    # in subclasses.
+    _answer_visualization_specs = []
     # Instructions for using this interaction, to be shown to the learner. Only
     # relevant for supplemental interactions.
     instructions = None
@@ -107,6 +109,14 @@ class BaseInteraction(object):
     # The heading for the 'default outcome' section in the editor. This should
     # be None unless the interaction is linear and non-terminal.
     default_outcome_heading = None
+    # Whether the solution feature supports this interaction.
+    can_have_solution = None
+    # Whether to show a Submit button in the progress navigation area when the
+    # window width is narrow. The navigation Submit button is only
+    # a generic submit button so do not use this if special interaction-specific
+    # behavior is required. The interaction JS must also handle the
+    # EVENT_PROGRESS_NAV_SUBMITTED event broadcast by the nav Submit button.
+    show_nav_submit_button = False
 
     # Temporary cache for the rule definitions.
     _cached_rules_dict = None
@@ -122,6 +132,29 @@ class BaseInteraction(object):
             for cas in self._customization_arg_specs]
 
     @property
+    def answer_visualization_specs(self):
+        return self._answer_visualization_specs
+
+    @property
+    def answer_visualizations(self):
+        result = []
+        for spec in self._answer_visualization_specs:
+            factory_cls = (
+                visualization_registry.Registry.get_visualization_class(
+                    spec['id']))
+            result.append(
+                factory_cls(
+                    spec['calculation_id'], spec['options'],
+                    spec['show_addressed_info']))
+        return result
+
+    @property
+    def answer_calculation_ids(self):
+        visualizations = self.answer_visualizations
+        return set(
+            [visualization.calculation_id for visualization in visualizations])
+
+    @property
     def dependency_ids(self):
         return copy.deepcopy(self._dependency_ids)
 
@@ -132,15 +165,6 @@ class BaseInteraction(object):
         else:
             return obj_services.Registry.get_object_class_by_type(
                 self.answer_type).normalize(answer)
-
-    @property
-    def _stats_log_template(self):
-        """The template for reader responses in the stats log."""
-        try:
-            return utils.get_file_contents(os.path.join(
-                feconf.INTERACTIONS_DIR, self.id, 'stats_response.html'))
-        except IOError:
-            return '{{answer}}'
 
     @property
     def rules_dict(self):
@@ -171,11 +195,9 @@ class BaseInteraction(object):
         interaction itself and the other for displaying the learner's response
         in a read-only view after it has been submitted.
         """
-        js_directives = utils.get_file_contents(os.path.join(
-            feconf.INTERACTIONS_DIR, self.id, '%s.js' % self.id))
         html_templates = utils.get_file_contents(os.path.join(
             feconf.INTERACTIONS_DIR, self.id, '%s.html' % self.id))
-        return '<script>%s</script>\n%s' % (js_directives, html_templates)
+        return jinja_utils.interpolate_cache_slug('%s' % html_templates)
 
     @property
     def validator_html(self):
@@ -185,7 +207,9 @@ class BaseInteraction(object):
         return (
             '<script>%s</script>\n' %
             utils.get_file_contents(os.path.join(
-                feconf.INTERACTIONS_DIR, self.id, 'validator.js')))
+                feconf.INTERACTIONS_DIR,
+                self.id,
+                '%sValidationService.js' % self.id)))
 
     def to_dict(self):
         """Gets a dict representing this interaction. Only default values are
@@ -198,8 +222,6 @@ class BaseInteraction(object):
             'display_mode': self.display_mode,
             'is_terminal': self.is_terminal,
             'is_trainable': self.is_trainable,
-            'is_string_classifier_trainable':
-                self.is_string_classifier_trainable,
             'is_linear': self.is_linear,
             'needs_summary': self.needs_summary,
             'customization_arg_specs': [{
@@ -212,6 +234,8 @@ class BaseInteraction(object):
             'narrow_instructions': self.narrow_instructions,
             'default_outcome_heading': self.default_outcome_heading,
             'rule_descriptions': self._rule_description_strings,
+            'can_have_solution': self.can_have_solution,
+            'show_nav_submit_button': self.show_nav_submit_button,
         }
 
     def get_rule_description(self, rule_name):
@@ -248,25 +272,8 @@ class BaseInteraction(object):
         """Gets the parameter type for a given rule parameter name."""
         rule_param_list = self.get_rule_param_list(rule_name)
 
-        for rule_name, rule_type in rule_param_list:
-            if rule_name == rule_param_name:
-                return rule_type
+        for param_name, param_type in rule_param_list:
+            if param_name == rule_param_name:
+                return param_type
         raise Exception(
             'Rule %s has no param called %s' % (rule_name, rule_param_name))
-
-    def get_stats_log_html(self, state_customization_args, answer):
-        """Gets the HTML for recording a learner's response in the stats log.
-
-        Returns an HTML string.
-        """
-        customization_args = {
-            ca_spec.name: (
-                state_customization_args[ca_spec.name]['value']
-                if ca_spec.name in state_customization_args
-                else ca_spec.default_value
-            ) for ca_spec in self.customization_arg_specs
-        }
-        customization_args['answer'] = answer
-
-        return jinja_utils.parse_string(
-            self._stats_log_template, customization_args, autoescape=False)

@@ -16,7 +16,7 @@
 
 """Domain object for a reference to an activity."""
 
-import feconf
+from constants import constants
 
 
 class ActivityReference(object):
@@ -25,20 +25,44 @@ class ActivityReference(object):
     An activity is a piece of learning material that can be created in Oppia.
     Currently, the only available types of activities are explorations and
     collections.
+
+    Attributes:
+        type: str. The activity type.
+        id: str. The activity id.
     """
 
     def __init__(self, activity_type, activity_id):
+        """Constructs an ActivityReference domain object.
+
+        Args:
+            activity_type: str. The activity type.
+            activity_id: str. The activity id.
+        """
         self.type = activity_type
         self.id = activity_id
 
     def get_hash(self):
+        """Returns a unique string for this ActivityReference domain object."""
         return '%s:%s' % (self.type, self.id)
 
     def validate(self):
-        if self.type not in feconf.ALL_ACTIVITY_TYPES:
+        """Checks that all fields of this ActivityReference domain object
+        are valid.
+
+        Raises:
+            Exception: The activity type is invalid.
+        """
+        if (self.type != constants.ACTIVITY_TYPE_EXPLORATION and
+                self.type != constants.ACTIVITY_TYPE_COLLECTION):
             raise Exception('Invalid activity type: %s' % self.type)
 
     def to_dict(self):
+        """Returns a dict representing this ActivityReference domain object.
+
+        Returns:
+            A dict, mapping type and id of a ActivityReference
+            instance to corresponding keys 'type' and 'id'.
+        """
         return {
             'type': self.type,
             'id': self.id,

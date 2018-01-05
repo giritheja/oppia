@@ -15,6 +15,7 @@
 """Common utility functions."""
 
 import base64
+import collections
 import datetime
 import hashlib
 import imghdr
@@ -32,6 +33,7 @@ import zipfile
 
 import yaml
 
+from constants import constants  # pylint: disable=relative-import
 import feconf  # pylint: disable=relative-import
 
 
@@ -247,6 +249,9 @@ def camelcase_to_hyphenated(camelcase_str):
     intermediate_str = re.sub('(.)([A-Z][a-z]+)', r'\1-\2', camelcase_str)
     return re.sub('([a-z0-9])([A-Z])', r'\1-\2', intermediate_str).lower()
 
+def camelcase_to_snakecase(camelcase_str):
+    intermediate_str = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', camelcase_str)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', intermediate_str).lower()
 
 def set_url_query_parameter(url, param_name, param_value):
     """Set or replace a query parameter, and return the modified URL."""
@@ -316,6 +321,14 @@ def get_human_readable_time_string(time_msec):
     time string for the admin dashboard.
     """
     return time.strftime('%B %d %H:%M:%S', time.gmtime(time_msec / 1000.0))
+
+
+def are_datetimes_close(later_datetime, earlier_datetime):
+    """Given two datetimes, determines whether they are separated by less than
+    feconf.PROXIMAL_TIMEDELTA_SECS seconds.
+    """
+    difference_in_secs = (later_datetime - earlier_datetime).total_seconds()
+    return difference_in_secs < feconf.PROXIMAL_TIMEDELTA_SECS
 
 
 def generate_random_string(length):
@@ -419,22 +432,21 @@ def capitalize_string(input_string):
 
 def get_hex_color_for_category(category):
     return (
-        feconf.CATEGORIES_TO_COLORS[category]
-        if category in feconf.CATEGORIES_TO_COLORS
-        else feconf.DEFAULT_COLOR)
+        constants.CATEGORIES_TO_COLORS[category]
+        if category in constants.CATEGORIES_TO_COLORS
+        else constants.DEFAULT_COLOR)
 
 
 def get_thumbnail_icon_url_for_category(category):
     icon_name = (
-        category if category in feconf.ALL_CATEGORIES
-        else feconf.DEFAULT_THUMBNAIL_ICON)
+        category if category in constants.CATEGORIES_TO_COLORS
+        else constants.DEFAULT_THUMBNAIL_ICON)
     # Remove all spaces from the string.
-    return ('%s/assets/images/subjects/%s.svg'
-            % (get_asset_dir_prefix(), icon_name.replace(' ', '')))
+    return '/subjects/%s.svg' % (icon_name.replace(' ', ''))
 
 
 def _get_short_language_description(full_language_description):
-    """Given one of the descriptions in feconf.ALL_LANGUAGE_CODES, generates
+    """Given one of the descriptions in constants.ALL_LANGUAGE_CODES, generates
     the corresponding short description.
     """
     if ' (' not in full_language_description:
@@ -448,7 +460,7 @@ def get_all_language_codes_and_names():
     return [{
         'code': lc['code'],
         'name': _get_short_language_description(lc['description']),
-    } for lc in feconf.ALL_LANGUAGE_CODES]
+    } for lc in constants.ALL_LANGUAGE_CODES]
 
 
 def unescape_encoded_uri_component(escaped_string):
@@ -456,18 +468,69 @@ def unescape_encoded_uri_component(escaped_string):
     return urllib.unquote(escaped_string).decode('utf-8')
 
 
-ASSET_DIR_PREFIX = None
 def get_asset_dir_prefix():
     """Returns prefix for asset directory depending whether dev or prod.
     It is used as a prefix in urls for images, css and script files.
     """
-    global ASSET_DIR_PREFIX # pylint: disable=global-statement
-    if not ASSET_DIR_PREFIX:
-        ASSET_DIR_PREFIX = ''
-        if feconf.IS_MINIFIED or not feconf.DEV_MODE:
-            yaml_file_content = dict_from_yaml(
-                get_file_contents('cache_slug.yaml'))
-            cache_slug = yaml_file_content['cache_slug']
-            ASSET_DIR_PREFIX = '/build/%s' % cache_slug
+    asset_dir_prefix = ''
+    if feconf.IS_MINIFIED or not feconf.DEV_MODE:
+        asset_dir_prefix = '/build'
 
-    return ASSET_DIR_PREFIX
+    return asset_dir_prefix
+
+
+def get_template_dir_prefix():
+    """Returns prefix for template directory depending whether dev or prod.
+    It is used as a prefix in urls for js script files under the templates
+    directory.
+    """
+    template_path = ('/templates/head' if feconf.IS_MINIFIED
+                     or not feconf.DEV_MODE else '/templates/dev/head')
+    return '%s%s' % (get_asset_dir_prefix(), template_path)
+
+
+def convert_to_str(string_to_convert):
+    """Converts the given unicode string to a string. If the string is not
+    unicode, we return the string.
+
+    Args:
+        string_to_convert: unicode|str.
+
+    Returns:
+        str. The encoded string.
+    """
+    if isinstance(string_to_convert, unicode):
+        return string_to_convert.encode('utf-8')
+    return string_to_convert
+
+
+def get_hashable_value(value):
+    """This function returns a hashable version of the input JSON-like value.
+
+    It converts the built-in sequences into their hashable counterparts
+    {list: tuple, dict: (sorted tuple of pairs)}. Additionally, their
+    elements are converted to hashable values through recursive calls. All
+    other value types are assumed to already be hashable.
+
+    Args:
+        value: *. Some JSON-like object, that is, an object made-up of only:
+            lists, dicts, strings, ints, bools, None. Types can be nested in
+            each other.
+
+    Returns:
+        hashed_value: *. A new object that will always have the same hash for
+        "equivalent" values.
+    """
+    if isinstance(value, list):
+        return tuple(get_hashable_value(e) for e in value)
+    elif isinstance(value, dict):
+        return tuple(sorted(
+            # Dict keys are already hashable, only values need converting.
+            (k, get_hashable_value(v)) for k, v in value.iteritems()))
+    else:
+        return value
+
+
+class OrderedCounter(collections.Counter, collections.OrderedDict):
+    """Counter that remembers the order elements are first encountered."""
+    pass

@@ -30,8 +30,7 @@ var argv = yargs
         })
         .option('output_directory', {
           describe: 'A path to the directory where the files will be generated'
-        })
-        .argv;
+        }).argv;
     })
   .command('start_devserver', 'start GAE development server',
     function(yargs) {
@@ -65,7 +64,7 @@ var manifest = require('./manifest.json');
 var cleanCss = require('gulp-clean-css');
 var path = require('path');
 var sourcemaps = require('gulp-sourcemaps');
-var minify = require('gulp-minify');
+var uglify = require('gulp-uglify');
 
 var gaeDevserverPath = argv.gae_devserver_path;
 var params = {
@@ -113,7 +112,6 @@ var frontendDependencies = manifest.dependencies.frontend;
 var cssFilePaths = [];
 var jsFilePaths = [];
 var fontFolderPaths = [];
-var cssBackgroundFilepaths = [];
 
 // TODO(gvishal): Issue: https://github.com/oppia/oppia/issues/2324
 // This code needs refactoring, reasons for which are documented in the above
@@ -135,7 +133,9 @@ var generatedJsTargetDir = path.join(generatedTargetDir, 'js');
 gulp.task('collectDependencyFilepaths', function() {
   for (var dependencyId in frontendDependencies) {
     var dependency = frontendDependencies[dependencyId];
-    var dependencyDir = dependency.targetDirPrefix + dependency.version;
+    var dependencyDir = (
+      dependency.targetDir ? dependency.targetDir :
+      dependency.targetDirPrefix + dependency.version);
     if (dependency.hasOwnProperty('bundle')) {
       if (dependency.bundle.hasOwnProperty('css')) {
         dependency.bundle.css.forEach(function(cssFiles) {
@@ -154,12 +154,6 @@ gulp.task('collectDependencyFilepaths', function() {
         fontFolderPaths.push(path.join('third_party', 'static', dependencyDir,
           dependency.bundle.fontsPath, fontPrefix));
       }
-      if (dependency.bundle.hasOwnProperty('cssBackgroundImage')) {
-        dependency.bundle.cssBackgroundImage.forEach(function(imagePath) {
-          cssBackgroundFilepaths.push(path.join(
-            'third_party', 'static', dependencyDir, imagePath));
-        });
-      }
     }
   }
 });
@@ -167,28 +161,27 @@ gulp.task('collectDependencyFilepaths', function() {
 gulp.task('generateCss', function() {
   requireFilesExist(cssFilePaths);
   gulp.src(cssFilePaths)
+    .pipe(isMinificationNeeded ? sourcemaps.init() : gulpUtil.noop())
+    .pipe(isMinificationNeeded ? concat('third_party.min.css') :
+        concat('third_party.css'))
     .pipe(isMinificationNeeded ? cleanCss({}) : gulpUtil.noop())
-    .pipe(concat('third_party.css'))
+    .pipe(isMinificationNeeded ? sourcemaps.write('.') : gulpUtil.noop())
     .pipe(gulp.dest(generatedCssTargetDir));
 });
 
 gulp.task('generateJs', function() {
   requireFilesExist(jsFilePaths);
   gulp.src(jsFilePaths)
-    .pipe(sourcemaps.init())
-      .pipe(concat('third_party.js'))
-      .pipe(isMinificationNeeded ? minify({
-        ext: {
-          src: '.js',
-          min: '.min.js'
-        }
-      }) : gulpUtil.noop())
+    .pipe(isMinificationNeeded ? sourcemaps.init() : gulpUtil.noop())
+    .pipe(isMinificationNeeded ? concat('third_party.min.js') :
+        concat('third_party.js'))
+    .pipe(isMinificationNeeded ? uglify() : gulpUtil.noop())
     // This maps a combined/minified file back to an unbuilt state by holding
     // information about original files. When you query a certain line and
     // column number in your generated JavaScript, you can do a lookup in the
     // source map which returns the original location.
     // http://www.html5rocks.com/en/tutorials/developertools/sourcemaps/
-    .pipe(sourcemaps.write())
+    .pipe(isMinificationNeeded ? sourcemaps.write('.') : gulpUtil.noop())
     .pipe(gulp.dest(generatedJsTargetDir));
 });
 // This task is used to copy all fonts which are used by
@@ -199,17 +192,6 @@ gulp.task('copyFonts', function() {
     .pipe(gulp.dest(path.join(generatedFontsTargetDir)));
 });
 
-// This is a task which copies background image used by css.
-// TODO(Barnabas) find a way of removing this task. It is a bit of a hack,
-// because it depends on the relative location of the CSS background images
-// of a third-party library with respect to the CSS file that uses them.
-// The currently-affected libraries include select2.css.
-gulp.task('copyCssBackgroundImages', function() {
-  requireFilesExist(cssBackgroundFilepaths);
-  gulp.src(cssBackgroundFilepaths)
-    .pipe(gulp.dest(generatedCssTargetDir));
-});
-
 gulp.task('gulpStartGae', function() {
   gulp.src('app.yaml')
     .pipe(gulpStartGae(gaeDevserverPath, [], params));
@@ -218,8 +200,7 @@ gulp.task('gulpStartGae', function() {
 // This takes all functions  that are required for the build
 // e.g css, Js and Images
 gulp.task('build', [
-  'collectDependencyFilepaths', 'generateCss', 'copyFonts',
-  'copyCssBackgroundImages', 'generateJs']);
+  'collectDependencyFilepaths', 'generateCss', 'copyFonts', 'generateJs']);
 
 gulp.slurped = false;
 gulp.task('watch', function() {
